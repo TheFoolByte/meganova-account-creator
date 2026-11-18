@@ -269,7 +269,7 @@ async function registerOne(browser, account, proxy) {
   // selama pendaftaran akun itu (kalau berubah-ubah di tengah jalan,
   // tracker justru curiga).
   await context.addInitScript(fingerprintNoiseScript(profile.canvasSeed));
-  const page = await context.newPage();
+  let page = await context.newPage();
   try {
     await page.goto('https://meganova.ai/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     // Warm-up SINGKAT (~8-20 detik): scroll + hover, jangan langsung signup.
@@ -300,6 +300,18 @@ async function registerOne(browser, account, proxy) {
     await sleep(jitter(2000, 4000));
 
     // --- Login Google ---
+    // "Continue with Google" kadang buka POPUP / tab baru, bukan redirect
+    // di halaman yang sama. Kalau begitu, page lama tetap di MegaNova dan
+    // input email tidak akan pernah muncul di situ — pindah ke popup-nya.
+    {
+      const pages = context.pages();
+      if (pages.length > 1) {
+        page = pages[pages.length - 1];
+        await page.bringToFront().catch(() => {});
+        console.log(`  Popup Google terdeteksi (${pages.length} tab), pindah ke tab popup. URL: ${page.url()}`);
+      }
+    }
+    console.log(`  Halaman login Google: ${page.url()} | judul: ${await page.title().catch(() => '')}`);
     // Pilih akun, kalau ada
     const accountBtn = page.getByText(email, { exact: false }).first();
     if (await accountBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -307,7 +319,21 @@ async function registerOne(browser, account, proxy) {
       console.log('  Pilih akun Google yang sudah tampil.');
     } else {
       const emailInput = page.locator('input[type="email"]').first();
-      await emailInput.waitFor({ timeout: 20000 });
+      try {
+        await emailInput.waitFor({ timeout: 30000 });
+      } catch (e) {
+        // Simpan bukti: screenshot + isi halaman, biar kelihatan Google
+        // sebenarnya menampilkan apa (CAPTCHA? "Use another account"?
+        // halaman consent? blokir headless?). File ini yang dikirim ke John.
+        const shot = `debug-${email.replace(/[^a-z0-9]/gi, '_')}-google.png`;
+        await page.screenshot({ path: shot }).catch(() => {});
+        const bodyTxt = ((await page.textContent('body').catch(() => '')) || '').replace(/\s+/g, ' ').slice(0, 500);
+        saveResult(email, 'failed', `input email Google tidak muncul dalam 30 detik. URL: ${page.url()} | screenshot: ${shot} | isi halaman: ${bodyTxt}`);
+        console.log(`  GAGAL: input email tidak muncul. URL: ${page.url()}`);
+        console.log(`  Isi halaman: ${bodyTxt}`);
+        console.log(`  Screenshot tersimpan: ${shot} — kirim file ini ke John.`);
+        return;
+      }
       // Ketik seperti manusia, bukan fill() instan (jejak bot).
       await humanType(emailInput, email);
       await clickByText(page, ['Next', 'Berikutnya']);
