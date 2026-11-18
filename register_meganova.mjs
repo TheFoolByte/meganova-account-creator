@@ -311,6 +311,14 @@ async function registerOne(browser, account, proxy) {
     await sleep(jitter(2000, 4000));
 
     const pagesBeforeGoogle = context.pages().length;
+    console.log(`  Frame di halaman register: ${JSON.stringify(page.frames().map((f) => f.url()).filter(Boolean))}`);
+    // Pasang listener popup SEBELUM klik — popup Google bisa muncul dan
+    // hilang dalam sekejap, dan kalau listener dipasang sesudah klik,
+    // popup itu terlewat. Listener ini juga yang menangkap popup yang
+    // dibuka dari dalam iframe (klik iframe tadi membuka popup, tapi
+    // context.pages() sesudahnya tidak bertambah karena popup-nya
+    // langsung detached / tertutup lagi).
+    const popupPromise = context.waitForEvent('page', { timeout: 20000 }).catch(() => null);
     // Cari tombol Google dengan banyak cara: role button/link, teks,
     // aria-label, dan iframe Google Sign-In (tombol GSI sering di-render
     // di dalam iframe, bukan sebagai <button> biasa di halaman utama).
@@ -361,22 +369,28 @@ async function registerOne(browser, account, proxy) {
       return;
     }
     console.log(`  Klik: ${clickedGoogle}`);
-    await sleep(jitter(2000, 4000));
+    await sleep(jitter(1000, 2000));
 
     // --- Login Google ---
     // Tombol "Login dengan Google" di halaman register membuka POPUP /
     // dialog terpisah ke accounts.google.com — bukan redirect di tab yang
-    // sama dan bukan tab browser biasa. Tunggu popup itu muncul, lalu
-    // pindah ke popup tersebut. Kalau tidak ada popup baru, mungkin
-    // Google-nya redirect di tab yang sama — lanjut apa adanya.
+    // sama dan bukan tab browser biasa. Popup-nya ditangkap lewat listener
+    // yang dipasang SEBELUM klik di atas.
     {
-      const pages = context.pages();
-      if (pages.length > pagesBeforeGoogle) {
-        page = pages[pages.length - 1];
+      const popup = await popupPromise;
+      if (popup) {
+        page = popup;
         await page.bringToFront().catch(() => {});
-        console.log(`  Popup Google terdeteksi (${pages.length} tab), pindah ke popup. URL: ${page.url()}`);
+        console.log(`  Popup Google terdeteksi, pindah ke popup. URL: ${page.url()}`);
       } else {
-        console.log(`  Tidak ada popup baru (${pages.length} tab), lanjut di tab ini. URL: ${page.url()}`);
+        const pages = context.pages();
+        if (pages.length > pagesBeforeGoogle) {
+          page = pages[pages.length - 1];
+          await page.bringToFront().catch(() => {});
+          console.log(`  Popup Google terdeteksi (${pages.length} tab), pindah ke popup. URL: ${page.url()}`);
+        } else {
+          console.log(`  Tidak ada popup baru (${pages.length} tab), lanjut di tab ini. URL: ${page.url()}`);
+        }
       }
     }
     console.log(`  Halaman login Google: ${page.url()} | judul: ${await page.title().catch(() => '')}`);
