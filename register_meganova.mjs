@@ -289,7 +289,25 @@ async function registerOne(browser, account, proxy) {
     }
     await sleep(jitter(1500, 3000));
 
-    const clickedGoogle = await clickByText(page, ['Continue with Google', 'Sign up with Google', 'Sign in with Google', 'Google']);
+    // ALUR BENAR (dicek live 2026-11-18): klik Sign up / Get started itu
+    // membuka TAB BARU ke https://console.meganova.ai/register — halaman
+    // "Create Account" dengan form Name / email / password / confirm,
+    // checkbox Terms, tombol SIGN UP, lalu pemisah "or" dan tombol Google.
+    // Script sebelumnya tidak pindah tab, jadi dia klik "Google" di tab
+    // lama dan salah sangka tab register itu popup Google.
+    // Jadi: pindah dulu ke tab register, baru cari tombol Google di sana.
+    {
+      const pages = context.pages();
+      if (pages.length > 1) {
+        page = pages[pages.length - 1];
+        await page.bringToFront().catch(() => {});
+        console.log(`  Pindah ke tab register (${pages.length} tab). URL: ${page.url()}`);
+      }
+    }
+    console.log(`  Halaman register: ${page.url()} | judul: ${await page.title().catch(() => '')}`);
+
+    const pagesBeforeGoogle = context.pages().length;
+    const clickedGoogle = await clickByText(page, ['Login dengan Google', 'Continue with Google', 'Sign up with Google', 'Sign in with Google', 'Google']);
     if (!clickedGoogle) {
       const body = (await page.textContent('body').catch(() => '')) || '';
       saveResult(email, 'failed', 'tombol Google tidak ditemukan. Isi halaman: ' + body.slice(0, 300));
@@ -300,15 +318,19 @@ async function registerOne(browser, account, proxy) {
     await sleep(jitter(2000, 4000));
 
     // --- Login Google ---
-    // "Continue with Google" kadang buka POPUP / tab baru, bukan redirect
-    // di halaman yang sama. Kalau begitu, page lama tetap di MegaNova dan
-    // input email tidak akan pernah muncul di situ — pindah ke popup-nya.
+    // Tombol "Login dengan Google" di halaman register membuka POPUP /
+    // dialog terpisah ke accounts.google.com — bukan redirect di tab yang
+    // sama dan bukan tab browser biasa. Tunggu popup itu muncul, lalu
+    // pindah ke popup tersebut. Kalau tidak ada popup baru, mungkin
+    // Google-nya redirect di tab yang sama — lanjut apa adanya.
     {
       const pages = context.pages();
-      if (pages.length > 1) {
+      if (pages.length > pagesBeforeGoogle) {
         page = pages[pages.length - 1];
         await page.bringToFront().catch(() => {});
-        console.log(`  Popup Google terdeteksi (${pages.length} tab), pindah ke tab popup. URL: ${page.url()}`);
+        console.log(`  Popup Google terdeteksi (${pages.length} tab), pindah ke popup. URL: ${page.url()}`);
+      } else {
+        console.log(`  Tidak ada popup baru (${pages.length} tab), lanjut di tab ini. URL: ${page.url()}`);
       }
     }
     console.log(`  Halaman login Google: ${page.url()} | judul: ${await page.title().catch(() => '')}`);
