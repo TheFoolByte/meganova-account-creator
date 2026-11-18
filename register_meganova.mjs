@@ -101,6 +101,7 @@ function loadOrCreateProfile(email, proxy) {
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 const HEADED = args.includes('--headed');
+const NO_PROXY = args.includes('--no-proxy');
 const startIdx = (() => {
   const i = args.indexOf('--start');
   return i >= 0 ? parseInt(args[i + 1] || '1', 10) - 1 : 0;
@@ -128,9 +129,21 @@ function loadAccounts() {
     let line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     if (line.startsWith('export ')) line = line.slice(7).trim();
+    // Bentuk polos DULU: email|password — dicek sebelum KEY=value,
+    // karena password boleh mengandung '=' (mis. #^:h>bMTU=8N9L48i#)5)
+    // dan '=' itu sebelumnya bikin baris ini salah dibaca sebagai KEY=value
+    // lalu akunnya dilewati diam-diam.
+    const pipe = line.indexOf('|');
+    if (pipe > 0) {
+      const beforePipe = line.slice(0, pipe).trim();
+      if (/^[^=\s]+@[^=\s]+$/.test(beforePipe)) {
+        const [email, password] = line.split('|').map((s) => (s || '').trim());
+        pushAccount(email, password, `Baris ${n + 1}`);
+        continue;
+      }
+    }
     // Bentuk KEY=value (gaya .env)
     const eq = line.indexOf('=');
-    if (eq > 0 && !line.includes('@') === false) { /* fallthrough ke bawah */ }
     if (eq > 0) {
       const key = line.slice(0, eq).trim();
       let value = line.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
@@ -163,9 +176,15 @@ function loadProxies() {
 }
 
 function loadDone() {
+  // Hanya akun yang SUKSES yang dilewati di run berikutnya.
+  // Akun yang failed (mis. proxy mati) harus bisa dicoba ulang —
+  // sebelumnya semua status ikut dilewati, jadi akun gagal terkunci.
   if (!fs.existsSync(REGISTERED_FILE)) return new Set();
   return new Set(
-    fs.readFileSync(REGISTERED_FILE, 'utf8').split(/\r?\n/).map((l) => l.split('|')[0].trim()).filter(Boolean)
+    fs.readFileSync(REGISTERED_FILE, 'utf8').split(/\r?\n/)
+      .map((l) => l.split('|'))
+      .filter((p) => p[1] === 'success' || p[1] === 'already_logged_in')
+      .map((p) => p[0].trim()).filter(Boolean)
   );
 }
 
@@ -214,7 +233,7 @@ async function registerOne(browser, account, proxy) {
   // kalau ini pertama kali. Jadi 1 Gmail = 1 device yang sama terus.
   const saved = loadOrCreateProfile(email, proxy);
   const profile = saved.profile;
-  proxy = saved.proxy;
+  proxy = NO_PROXY ? null : saved.proxy;
   console.log(`\n=== ${email} ===`);
   console.log(`  Profil: ${saved.isNew ? 'BARU (digenerate + disimpan)' : 'persistent (dipakai ulang)'}`);
   console.log(`  Proxy: ${proxy || '(tanpa proxy)'}`);
@@ -341,7 +360,11 @@ async function registerOne(browser, account, proxy) {
 
 async function main() {
   const accounts = loadAccounts();
-  const proxies = loadProxies();
+  // --no-proxy: jalan tanpa proxy sama sekali. Berguna untuk membuktikan
+  // dulu apakah MegaNova + Google-nya yang bermasalah, atau proxy-nya.
+  // Kalau tanpa proxy jalan, berarti proxy gratis di proxies.txt yang mati.
+  const proxies = NO_PROXY ? [] : loadProxies();
+  if (NO_PROXY) console.log('Mode --no-proxy: proxy dimatikan untuk run ini.');
   console.log(`Akun di accounts.env: ${accounts.length}`);
   console.log(`Proxy di proxies.txt: ${proxies.length}`);
   if (DRY_RUN) {
