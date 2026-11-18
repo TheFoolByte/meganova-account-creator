@@ -1,0 +1,1 @@
+{"dependencies":{"playwright":"^1.65.1"},"name":"meganova-account-creator","private":true,"scripts":{"dry":"node register_meganova.mjs --dry-run","headed":"node register_meganova.mjs --headed","start":"node register_meganova.mjs"},"type":"module","version":"1.0.0"}
