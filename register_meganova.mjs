@@ -305,13 +305,59 @@ async function registerOne(browser, account, proxy) {
       }
     }
     console.log(`  Halaman register: ${page.url()} | judul: ${await page.title().catch(() => '')}`);
+    // Tunggu halaman register selesai load — tombol Google-nya di-render
+    // oleh JS, jadi langsung dicari setelah pindah tab bisa jadi belum ada.
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await sleep(jitter(2000, 4000));
 
     const pagesBeforeGoogle = context.pages().length;
-    const clickedGoogle = await clickByText(page, ['Login dengan Google', 'Continue with Google', 'Sign up with Google', 'Sign in with Google', 'Google']);
+    // Cari tombol Google dengan banyak cara: role button/link, teks,
+    // aria-label, dan iframe Google Sign-In (tombol GSI sering di-render
+    // di dalam iframe, bukan sebagai <button> biasa di halaman utama).
+    let clickedGoogle = null;
+    const googleLocators = [
+      page.getByRole('button', { name: /Login dengan Google/i }),
+      page.getByRole('link', { name: /Login dengan Google/i }),
+      page.locator('text=Login dengan Google'),
+      page.locator('[aria-label*="Google" i]'),
+      page.getByRole('button', { name: /Google/i }),
+    ];
+    for (const loc of googleLocators) {
+      try {
+        const el = loc.first();
+        if (await el.isVisible({ timeout: 8000 }).catch(() => false)) {
+          await humanClick(page, el);
+          clickedGoogle = 'Login dengan Google';
+          break;
+        }
+      } catch {}
+    }
+    // Coba iframe: tombol Google Sign-In kadang di dalam <iframe>.
     if (!clickedGoogle) {
-      const body = (await page.textContent('body').catch(() => '')) || '';
-      saveResult(email, 'failed', 'tombol Google tidak ditemukan. Isi halaman: ' + body.slice(0, 300));
+      for (const frame of page.frames()) {
+        try {
+          const el = frame.getByText(/Login dengan Google|Google/i).first();
+          if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
+            await el.click();
+            clickedGoogle = 'Login dengan Google (iframe)';
+            break;
+          }
+        } catch {}
+      }
+    }
+    if (!clickedGoogle) {
+      clickedGoogle = await clickByText(page, ['Login dengan Google', 'Continue with Google', 'Sign up with Google', 'Sign in with Google', 'Google']);
+    }
+    if (!clickedGoogle) {
+      const shot = `debug-${email.replace(/[^a-z0-9]/gi, '_')}-register.png`;
+      await page.screenshot({ path: shot }).catch(() => {});
+      const buttons = await page.$$eval('button, a, [role="button"]', (els) => els.map((e) => (e.innerText || e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 80)).filter(Boolean)).catch(() => []);
+      const body = ((await page.textContent('body').catch(() => '')) || '').replace(/\s+/g, ' ').slice(0, 500);
+      saveResult(email, 'failed', `tombol Google tidak ditemukan. URL: ${page.url()} | screenshot: ${shot} | tombol di halaman: ${JSON.stringify(buttons)} | isi halaman: ${body}`);
       console.log('  GAGAL: tombol Google tidak ditemukan.');
+      console.log(`  Tombol di halaman: ${JSON.stringify(buttons)}`);
+      console.log(`  Isi halaman: ${body}`);
+      console.log(`  Screenshot tersimpan: ${shot} — kirim file ini ke John.`);
       return;
     }
     console.log(`  Klik: ${clickedGoogle}`);
